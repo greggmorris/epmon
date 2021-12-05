@@ -1,30 +1,30 @@
-//
-// Based on code from the following sources:
+// process_info.cpp
+// Most of the code here was modified in various ways by me, based on code from the following sources:
 // https://ubuntuforums.org/showthread.php?t=657097
 // https://raw.githubusercontent.com/fho/code_snippets/master/c/getusage.c
+// It is mostly roughly polished C code, not really C++ at all.
+// It is intended that the single entry point into this module is the get_proc_info() function.
+// It is expected that this entire module be replaced with something more robust, but this will
+// have to do for now. The thing that bothers me most is the need to do "before" and "after"
+// calls to get proc data to calculate the percent of CPU used by the process. There should be
+// a better way but I couldn't find it in a reasonable time frame.
 
 #include "process_info.h"
-
-#include <proc/readproc.h>
-
 #include <unistd.h>
 #include <dirent.h>
-#include <limits.h>
-
-#include <iostream>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 
-
-#define PROC_DIRECTORY "/proc/"
-#define STAT_DIRECTORY  "/stat"
+#define PROC_DIRECTORY      "/proc/"
+#define STAT_DIRECTORY      "/stat"
 #define CASE_SENSITIVE      1
 #define CASE_INSENSITIVE    0
 #define MAX_CMDLINE_LEN     4096
 #define MAX_PROCNAME_LEN    1024
 #define MAX_STATPATH_LEN    128
 
-
+// This struct is used to store a subset of the data available in the /proc/<pid>/stat file.
 struct pstat
 {
     long unsigned int utime_ticks;
@@ -89,8 +89,6 @@ pid_t GetPIDbyName(const char *pproc_name, bool check_case)
                 strcpy(cmdline_path, PROC_DIRECTORY);
                 strcat(cmdline_path, dir_entry->d_name);
                 strcat(cmdline_path, "/cmdline");
-//                printf("cmdline_path: %s\n", cmdline_path);
-
                 FILE *cmdline_file = fopen(cmdline_path, "rt");  // open the file for reading text
                 if (cmdline_file)
                 {
@@ -101,8 +99,6 @@ pid_t GetPIDbyName(const char *pproc_name, bool check_case)
                     char *p = strchr(proc_name, ' ');
                     if (p != nullptr)
                         *p = '\0';
-//                    printf("Process name: %s\n", chrarry_NameOfProcess);
-//                    printf("Pure Process name: %s\n\n", chrptr_StringToCompare);
                     // See if the process's executable name contains the process name we're
                     // looking for. The executable name probably contains the path info,
                     // which we may not have been given for the process we're looking for.
@@ -204,6 +200,7 @@ void calc_cpu_usage_pct(const struct pstat *cur_usage, const struct pstat *last_
 // The only way to get the CPU usage is to calculate it from two different times.
 // We get the process's stat data, sleep for 1 second, then get the data again.
 // With those two sets of data we can calculate CPU usage.
+// Memory use is reported in Kbytes.
 int get_proc_info(const std::string &proc_name, int *pid, double *pcpu, double *mem)
 {
     int ret = 0;
@@ -214,7 +211,6 @@ int get_proc_info(const std::string &proc_name, int *pid, double *pcpu, double *
     *pid = (int) pid_tmp;
     *pcpu = 0.0;
     *mem = 0.0;
-//    std::cout << "PID for " << proc_name << " = " << pid_tmp << std::endl;
     if (pid_tmp > 0) {
         ret = get_proc_data(pid_tmp, &before);
         if (ret != 0)
@@ -223,126 +219,9 @@ int get_proc_info(const std::string &proc_name, int *pid, double *pcpu, double *
         ret = get_proc_data(pid_tmp, &after);
         if (ret != 0)
             return ret;
-        calc_cpu_usage_pct(&after, &before, pcpu, &scpu_usage);
-//        std::cout << "ucpu_usage = " << ucpu_usage << ", scpu_usage = " << scpu_usage << std::endl;
-//        std::cout << "vsize = " << after.vsize << ", rss = " << after.rss << std::endl;
+        calc_cpu_usage_pct(&after, &before, pcpu, &ucpu_usage);
         *pcpu = ucpu_usage;
-        *mem = static_cast<double>(after.vsize);
+        *mem = static_cast<double>(after.vsize) / 1024.0;
     }
     return 0;
 }
-#if 0
-// System uptime and idle time are stored in /proc/uptime as two floating point numbers. All
-// the other numbers we need for CPU usage calculation are unsigned long longs. We only care
-// about uptime, but to get it into an unsigned long long we have to monkey with it a bit.
-unsigned long long get_uptime()
-{
-    char ut_s[64];
-    double ut_d = 0;
-    unsigned long long uptime = 0;
-    FILE *f_uptime = fopen("/proc/uptime", "rt");  // open the file for reading text
-    if (f_uptime) {
-        // read the first floating point number as a string
-        fscanf(f_uptime, "%s", ut_s);
-        printf("ut_s = %s\n", ut_s);
-        // convert the string to a double
-        ut_d = strtod(ut_s, nullptr);
-        // multiply by 100 to get rid of the decimal point
-        ut_d *= 100.0;
-        printf("ut_d = %f\n", ut_d);
-        // convert the double to an unsigned long long
-        uptime = static_cast<unsigned long long>(ut_d);
-        printf("uptime = %lld\n", uptime);
-        // finally, divide by 100. Yes, we are losing precision here.
-        uptime /= 100;
-    }
-    return uptime;
-}
-
-void thing(const std::string &proc_name)
-{
-    PROCTAB *proc = openproc(PROC_FILLMEM | PROC_FILLSTAT | PROC_FILLSTATUS);
-    proc_t proc_info;
-    memset(&proc_info, 0, sizeof(proc_info));
-
-    char ut[64], it[64];
-    unsigned long long uptime = get_uptime();
-
-//    FILE *proc_uptime = fopen("/proc/uptime", "rt");  // open the file for reading text
-//    if (proc_uptime) {
-//        fscanf(proc_uptime, "%s %s", ut, it);
-//        uptime = strtoull(ut, nullptr, 10);
-//        idle = strtoull(it, nullptr, 10);
-//        printf("uptime = %f, idle = %f\n", uptime, idle);
-//    }
-
-    printf("%20s:\t%5s\t%5s\t%5s\t%5s\t%6s\t%6s\n", "Cmd Name", "PID", "Mem", "utime", "stime", "cutime", "cstime");
-    while (readproc(proc, &proc_info) != nullptr) {
-//        printf("%20s:\t%5ld\t%5lld\t%5lld\n", proc_info.cmd, proc_info.resident, proc_info.utime, proc_info.stime);
-        if (strcmp(proc_name.c_str(), proc_info.cmd) == 0) {
-            printf("%20s:\t%5d\t%5ld\t%5lld\t%5lld\t%5lld\t%5lld\n", proc_info.cmd, proc_info.tgid, proc_info.resident,
-                   proc_info.utime, proc_info.stime, proc_info.cutime, proc_info.cstime);
-            break;
-        }
-    }
-#if 0
-    First we determine the total time spent for the process:
-
-total_time = utime + stime
-
-We also have to decide whether we want to include the time from children processes. If we do, then we add those values to total_time:
-
-total_time = total_time + cutime + cstime
-
-Next we get the total elapsed time in seconds since the process started:
-
-seconds = uptime - (starttime / Hertz)
-
-Finally we calculate the CPU usage percentage:
-
-cpu_usage = 100 * ((total_time / Hertz) / seconds)
-//user_util = 100 * (utime_after - utime_before) / (time_total_after - time_total_before);
-//sys_util = 100 * (stime_after - stime_before) / (time_total_after - time_total_before);
-#endif
-    printf("uptime = %lld\n", uptime);
-    unsigned long long utime_before, utime_after;
-    unsigned long long stime_before, stime_after;
-    unsigned long long total_before, total_after;
-
-    total_before = proc_info.utime + proc_info.stime + proc_info.cutime + proc_info.cstime;
-    utime_before = proc_info.utime;
-    stime_before = proc_info.stime;
-    sleep(1);
-    total_after = proc_info.utime + proc_info.stime + proc_info.cutime + proc_info.cstime;
-    utime_after = proc_info.utime;
-    stime_after = proc_info.stime;
-
-    printf("total_before = %lld, utime_before = %lld, stime_before = %lld\n", total_before, utime_before, stime_before);
-    printf("total_after = %lld, utime_after = %lld, stime_after = %lld\n", total_after, utime_after, stime_after);
-
-//    unsigned long long cpu_usage = 100 * ((total_time / ticks) / seconds);
-//    unsigned long long cpu_usage = (total_time * 100 / ticks) / seconds;
-//    printf("cpu_usage = %lld\n", cpu_usage);
-
-#if 0
-    printf("uptime = %lld\n", uptime);
-    unsigned long long total_time = proc_info.utime + proc_info.stime;
-    total_time = total_time + proc_info.cutime + proc_info.cstime;
-    printf("total_time = %lld\n", total_time);
-    long ticks = sysconf(_SC_CLK_TCK);
-    printf("ticks = %ld\n", ticks);
-    printf("proc_info.start_time = %lld\n", proc_info.start_time);
-    unsigned long long secs = proc_info.start_time / ticks;
-    printf("secs = %lld\n", secs);
-    unsigned long long seconds = uptime - secs;
-    printf("seconds = %lld\n", seconds);
-//    unsigned long long cpu_usage = 100 * ((total_time / ticks) / seconds);
-    unsigned long long cpu_usage = (total_time * 100 / ticks) / seconds;
-    printf("cpu_usage = %lld\n", cpu_usage);
-#endif
-    closeproc(proc);
-}
-#endif
-
-//-------------------------------------------------------------
-

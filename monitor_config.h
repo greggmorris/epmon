@@ -1,6 +1,5 @@
-//
-// Created by gregg on 12/4/21.
-//
+// monitor_config.h
+// This file defines the MonitorConfig class. See monitor_config.cpp for more information.
 
 #ifndef EPMON_MONITOR_CONFIG_H
 #define EPMON_MONITOR_CONFIG_H
@@ -14,18 +13,16 @@ using json = nlohmann::json;
 class MonitorConfig {
 public:
     MonitorConfig(int interval, std::vector<std::string> *app_list, std::mutex &mut);
-    ~MonitorConfig();
+    ~MonitorConfig() = default;     // Nothing to clean up.
+
+    std::thread run() { return std::thread([this] { this->config_loop(); }); }
+
 private:
     int read_interval;  // number of seconds between calls to read configuration
     std::vector<std::string> *apps;
     std::mutex &data_lock;
-public:
-    void config_loop();
-    std::thread run() {
-        return std::thread([this] { this->config_loop(); });
-    }
-//    [[noreturn]] void run();
     void update_config();
+    void config_loop();
 };
 
 #endif //EPMON_MONITOR_CONFIG_H
