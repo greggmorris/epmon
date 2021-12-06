@@ -3,7 +3,10 @@
 // This class is responsible for periodically getting configuration information which
 // consists of a list of process names to monitor. The process names are stored in a shared
 // vector of strings. This vector is also used by the Monitor class to know which processes
-// to monitor.
+// to monitor. When it's time to read from the configuration server, we do the GET operation,
+// and if that succeeds, we lock the shared vector of app names and update it. We do as
+// little as possible while the data is locked; no external functions or methods are called
+// while we're locked.
 // The only public method is the run() method, which starts a thread running the private
 // config_loop() method. This method runs forever, getting the configuration info on an
 // interval passed into the constructor.

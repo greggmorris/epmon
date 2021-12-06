@@ -3,6 +3,16 @@
 // This class is responsible for periodically getting process information about a
 // list of processes. The process info is collected into a single JSON object and
 // send to a results server.
+// When it's time to get process info, the first thing we do is lock the shared list
+// of app names and copy them to a local list. I felt that was the safest / easiest way
+// to deal with the possibility of the list changing while we're looping through it,
+// and to minimize the time spent with the data locked.
+// Once we have an updated list of app names, we loop through it, getting the process
+// info for the app (if the app exists) and creating a JSON object with the results.
+// The results of each app are added to a local vector of JSON objects, then when we
+// have collected info on all the apps, the individual results are collected into a
+// single JSON object. That object is converted to a string and sent via a POST message
+// to the results server.
 // The only public method is the run() method, which starts a thread running the
 // private work_loop() method. This method runs forever, getting process information
 // on an interval passed into the constructor.
@@ -138,22 +148,6 @@ Monitor::~Monitor() {
     local_app_list.clear();
 }
 
-// Copy from the shared list of applications to monitor to a local list. I went round
-// and round on this, finally deciding that it would be better if I didn't have to lock
-// the shared list for any longer than absolutely necessary. One possible drawback to
-// this is that the list of applications to monitor could change while I'm still
-// processing the local list. On the other hand, not having to worry about the list
-// changing while I'm looping through it does simplify things a bit, I think.
-int Monitor::update_app_list()
-{
-    local_app_list.clear();
-    std::lock_guard<std::mutex> lck { data_lock };
-    for (auto &app : *shared_app_list) {
-        local_app_list.push_back(app);
-    }
-    return (int) local_app_list.size();
-}
-
 // Loop through the (local) list of applications to monitor and get the desired
 // process info for each. Combine the individual results into a single JSON object
 // and return it.
@@ -173,6 +167,22 @@ json Monitor::get_all_app_info()
     // Combine the individual results into a single JSON object.
     jres = combine_results(results_vec);
     return jres;
+}
+
+// Copy from the shared list of applications to monitor to a local list. I went round
+// and round on this, finally deciding that it would be better if I didn't have to lock
+// the shared list for any longer than absolutely necessary. One possible drawback to
+// this is that the list of applications to monitor could change while I'm still
+// processing the local list. On the other hand, not having to worry about the list
+// changing while I'm looping through it does simplify things a bit, I think.
+int Monitor::update_app_list()
+{
+    local_app_list.clear();
+    std::lock_guard<std::mutex> lck { data_lock };
+    for (auto &app : *shared_app_list) {
+        local_app_list.push_back(app);
+    }
+    return (int) local_app_list.size();
 }
 
 // This is the thread function. It runs forever because I didn't want to spend the time
