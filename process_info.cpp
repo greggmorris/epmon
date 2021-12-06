@@ -121,9 +121,11 @@ pid_t GetPIDbyName(const char *pproc_name, bool check_case)
                             fprintf(stderr, "ERROR: failed to extract PID: no digits were found.\n");
                             pid_tmp = -1;
                         }
+                        fclose(cmdline_file);
                         closedir(dir_proc);
                         return (pid_t) pid_tmp;
                     }
+                    fclose(cmdline_file);
                 }
             }
         }
@@ -141,14 +143,13 @@ int get_proc_data(const pid_t pid, struct pstat *result)
     snprintf(stat_filepath, MAX_STATPATH_LEN, "%s%d%s", PROC_DIRECTORY, pid, STAT_DIRECTORY);
     FILE *fprocess_stat = fopen(stat_filepath, "r");
     if (fprocess_stat == nullptr) {
-        char msg[64];
         perror("Failed to open the process's stat directory ");
         return -1;
     }
     FILE *fstat = fopen("/proc/stat", "r");
     if (fstat == nullptr) {
         perror("Failed to open /proc/stat ");
-        fclose(fstat);
+        fclose(fprocess_stat);
         return -1;
     }
     // Read values from /proc/pid/stat
@@ -160,6 +161,7 @@ int get_proc_data(const pid_t pid, struct pstat *result)
                &result->cutime_ticks, &result->cstime_ticks,
                &result->vsize, &rss) == EOF) {
         fclose(fprocess_stat);
+        fclose(fstat);
         return -1;
     }
     fclose(fprocess_stat);
@@ -209,7 +211,7 @@ int get_proc_info(const std::string &proc_name, int *pid, double *pcpu, double *
 {
     int ret = 0;
     struct pstat before = { 0 }, after = { 0 };
-    double ucpu_usage = 0.0, scpu_usage = 0.0;
+    double ucpu_usage = 0.0;
 
     pid_t pid_tmp = GetPIDbyName(proc_name.c_str(), CASE_INSENSITIVE);
     *pid = (int) pid_tmp;

@@ -15,6 +15,8 @@
 // passed into the constructor, there is no mechanism to update it at runtime.
 // The configuration server URL is hard-coded. It should be configurable and updatable at
 // runtime, but as with the loop interval, there is no mechanism to do this.
+// I think error handling could be more robust, and that's something that would probably
+// be made more obvious by more extensive testing.
 // Testing
 // There isn't any but there should be, obviously. I would like to be able to create
 // a list of JSON objects with a variety of configurations to test. For example, a list
@@ -57,21 +59,20 @@ namespace {
         curl = curl_easy_init();
         if (curl) {
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
-            curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 50L);
-            curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+            curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+//            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
 
             std::string response_string;
-            std::string header_string;
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_string);
-            curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_string);
 
             curl_easy_perform(curl);
             // Convert the GET results into a JSON object.
-            json_config = json::parse(response_string);
+            if (!response_string.empty())
+                json_config = json::parse(response_string);
+            else
+                std::cout << "get_config: response_string is empty\n";
             curl_easy_cleanup(curl);
-            curl_global_cleanup();
             ret = true;
         }
         return ret;
@@ -99,6 +100,8 @@ void MonitorConfig::update_config()
             apps->push_back(element);
         }
     }
+    else
+        std::cout << "MonitorConfig::update_config: get_config failed\n";
 }
 
 // This is the thread function. It runs forever because I didn't want to spend the time

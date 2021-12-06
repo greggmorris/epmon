@@ -30,7 +30,8 @@
 #include <mutex>
 #include <thread>
 #include "nlohmann_json/json.hpp"
-#include "process_info.h"
+#include <curl/curl.h>
+//#include "process_info.h"
 #include "monitor_config.h"
 #include "monitor.h"
 
@@ -80,6 +81,7 @@ namespace {
     // where the interval values are seconds such that:
     //     1 <= [config read interval] <= 600
     //     1 <= [monitor interval] <= 600
+    // You must pass all parameters.
     // If we fail to read values, use the default values defined above. This is not awesome
     // for the URLs but it's all I have time for.
     // This is really brain-dead brute force parameter handling, and there's no error-checking
@@ -163,6 +165,7 @@ namespace {
     void signalIntHandler(int signum)
     {
         std::cout << "\nReceived termination signal, shutting down." << std::endl;
+        curl_global_cleanup();
         exit(signum);
     }
 
@@ -196,6 +199,9 @@ int main(int argc, char *argv[])
     // Register a signal handler.
     signal(SIGINT, signalIntHandler);
     signal(SIGTERM, signalIntHandler);
+    // The curl library initialization must happen only once, and since we can't
+    // guarantee which thread might get there first, we'll do it here.
+    curl_global_init(CURL_GLOBAL_ALL);
 
     // set program config options if provided
     read_program_config(argc, argv, prog_config);

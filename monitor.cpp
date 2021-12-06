@@ -21,6 +21,8 @@
 // passed into the constructor, there is no mechanism to update it at runtime.
 // The results server URL is hard-coded. It should be configurable and updatable at
 // runtime, but as with the loop interval, there is no mechanism to do this.
+// I think error handling could be more robust, and that's something that would probably
+// be made more obvious by more extensive testing.
 // Testing
 // There isn't any but there should be, obviously. I think it would be useful to be
 // able to create a set of process info without an actual corresponding process. Then
@@ -60,6 +62,7 @@ namespace {
         auto right_now = std::chrono::system_clock::now();
         std::time_t the_time = std::chrono::system_clock::to_time_t(right_now);
         std::string timestamp(std::ctime(&the_time));
+        // If there's a trailing newline on the timestamp, get the time string without it.
         if (timestamp.at(timestamp.length() - 1) == '\n')
             timestamp = timestamp.substr(0,timestamp.length() - 1);
         json jres = {
@@ -118,9 +121,6 @@ namespace {
         CURLcode res;
         struct curl_response resp = { nullptr };
 
-        /* In windows, this will init the winsock stuff */
-        curl_global_init(CURL_GLOBAL_ALL);
-
         curl = curl_easy_init();
         if (curl) {
             // Set the results server URL. Hard-coded for now but really should be configurable.
@@ -138,7 +138,6 @@ namespace {
             curl_easy_cleanup(curl);
             ret = true;
         }
-        curl_global_cleanup();
         return ret;
     }
 }
@@ -168,13 +167,14 @@ json Monitor::get_all_app_info()
     std::vector<json> results_vec;
 
     for (auto &app : local_app_list) {
-        std::cout << "Monitor::get_all_app_info: get info for " << app << std::endl;
         get_proc_info(app, &pid, &pcpu, &mem);
         // Only add results if we actually got some.
         if (pid > 0) {
             jres = make_single_result(app, pid, pcpu, mem);
             results_vec.push_back(jres);
         }
+        else
+            std::cout << "Monitor::get_all_app_info: " << app << " returned pid=" << pid << std::endl;
     }
     // Combine the individual results into a single JSON object.
     jres = combine_results(results_vec);
