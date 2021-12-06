@@ -12,13 +12,14 @@ using json = nlohmann::json;
 
 class Monitor {
 public:
-    Monitor(int interval, std::vector<std::string> *app_list, std::mutex &mut);
+    Monitor(int interval, std::string url, std::vector<std::string> *app_list, std::mutex &mut);
     ~Monitor();
 
     std::thread run() { return std::thread([this] { this->work_loop(); }); }
 
 private:
     int monitor_interval;
+    std::string results_url;
     std::vector<std::string> *shared_app_list;
     std::vector<std::string> local_app_list;
     std::mutex &data_lock;

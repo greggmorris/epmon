@@ -12,13 +12,14 @@ using json = nlohmann::json;
 
 class MonitorConfig {
 public:
-    MonitorConfig(int interval, std::vector<std::string> *app_list, std::mutex &mut);
+    MonitorConfig(int interval, std::string url, std::vector<std::string> *app_list, std::mutex &mut);
     ~MonitorConfig() = default;     // Nothing to clean up.
 
     std::thread run() { return std::thread([this] { this->config_loop(); }); }
 
 private:
     int read_interval;  // number of seconds between calls to read configuration
+    std::string server_url; // URL of configuration server
     std::vector<std::string> *apps;
     std::mutex &data_lock;
     void update_config();

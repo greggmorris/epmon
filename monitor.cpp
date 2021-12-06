@@ -21,8 +21,15 @@
 // passed into the constructor, there is no mechanism to update it at runtime.
 // The results server URL is hard-coded. It should be configurable and updatable at
 // runtime, but as with the loop interval, there is no mechanism to do this.
-// There are no test methods defined and there really should be.
-//
+// Testing
+// There isn't any but there should be, obviously. I think it would be useful to be
+// able to create a set of process info without an actual corresponding process. Then
+// we could mess with that output and make sure the rest of the code Does The Right Thing.
+// As with the MonitorConfig class, it would probably be useful to have public access
+// to the various private methods. Not sure how this might be done other than with
+// conditional compile statements in the source.
+// Ideally we want a way to test that doesn't always require starting the work loop
+// thread.
 
 #include <iostream>
 #include <unistd.h>
@@ -80,7 +87,9 @@ namespace {
     json combine_results(std::vector<json> &results_vec)
     {
         json jres, jvec(results_vec);
-        jres["healthcheck"] = jvec;
+        if (!results_vec.empty()) {
+            jres["healthcheck"] = jvec;
+        }
         return jres;
     }
 
@@ -101,7 +110,7 @@ namespace {
     }
 
     // Send a POST message containing the JSON app monitoring results to the results URL.
-    bool send_app_results(json &json_results)
+    bool send_app_results(const std::string &url, json &json_results)
     {
         bool ret = false;
         char post_buf[4096];
@@ -115,7 +124,7 @@ namespace {
         curl = curl_easy_init();
         if (curl) {
             // Set the results server URL. Hard-coded for now but really should be configurable.
-            curl_easy_setopt(curl, CURLOPT_URL, "https://enbtrmfkj3vp.x.pipedream.net");
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_output_cb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&resp);
             // Convert the JSON results to a single string.
@@ -137,8 +146,8 @@ namespace {
 // The constructor doesn't really do any work, just sets local variables. I wanted
 // to minimize the places where locking would be required, so I don't populate the
 // local app list from the shared app list until the thread is actually running.
-Monitor::Monitor(int interval, std::vector<std::string> *app_list, std::mutex &mut)
-    : monitor_interval(interval), shared_app_list(app_list), data_lock(mut)
+Monitor::Monitor(int interval, std::string url, std::vector<std::string> *app_list, std::mutex &mut)
+    : monitor_interval(interval), results_url(std::move(url)), shared_app_list(app_list), data_lock(mut)
 {
 }
 
@@ -161,8 +170,11 @@ json Monitor::get_all_app_info()
     for (auto &app : local_app_list) {
         std::cout << "Monitor::get_all_app_info: get info for " << app << std::endl;
         get_proc_info(app, &pid, &pcpu, &mem);
-        jres = make_single_result(app, pid, pcpu, mem);
-        results_vec.push_back(jres);
+        // Only add results if we actually got some.
+        if (pid > 0) {
+            jres = make_single_result(app, pid, pcpu, mem);
+            results_vec.push_back(jres);
+        }
     }
     // Combine the individual results into a single JSON object.
     jres = combine_results(results_vec);
@@ -200,17 +212,24 @@ void Monitor::work_loop()
         std::cout << "Monitor::work_loop: calling update_app_list" << std::endl;
         int num_apps = update_app_list();
         // It's possible there are no apps to monitor. This may happen if this thread
-        // runs before the MonitorConfig thread can read the app list.
+        // runs before the MonitorConfig thread can read the app list, or maybe
+        // Something Bad happened reading from the configuration server. Whatever,
+        // we'll just sleep and hope things are better next time around.
         if (num_apps == 0)
-            std::cout << "Monitor::work_loop: No apps specified, sleeping...." << std::endl;
+            std::cout << "Monitor::work_loop: No apps specified." << std::endl;
         else {
             // Get the process info for the monitored apps in a single JSON object.
             jres = get_all_app_info();
-            std::cout << "Monitor::work_loop: sending monitor results" << std::endl;
-            // Send the collected results to the results server.
-            send_app_results(jres);
-            std::cout << "Monitor::work_loop: sleeping for " << monitor_interval << " seconds" << std::endl;
+            if (jres.empty()) {
+                std::cout << "Monitor::work_loop: no results to send." << std::endl;
+            }
+            else {
+                std::cout << "Monitor::work_loop: sending monitor results." << std::endl;
+                // Send the collected results to the results server.
+                send_app_results(results_url, jres);
+            }
         }
+        std::cout << "Monitor::work_loop: sleeping for " << monitor_interval << " seconds" << std::endl;
         // Sleep for the configured interval.
         sleep(monitor_interval);
     }

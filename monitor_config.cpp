@@ -15,8 +15,18 @@
 // passed into the constructor, there is no mechanism to update it at runtime.
 // The configuration server URL is hard-coded. It should be configurable and updatable at
 // runtime, but as with the loop interval, there is no mechanism to do this.
-// There are no test methods defined and there really should be.
-//
+// Testing
+// There isn't any but there should be, obviously. I would like to be able to create
+// a list of JSON objects with a variety of configurations to test. For example, a list
+// that includes nonexistent applications, no applications at all, a large number of
+// applications (real and otherwise), and so on. I'm not sure how best to do it,
+// but maybe add a flag to get_config() that means just return the JSON object that
+// was passed in instead of making the GET call.
+// It would probably be useful to have public access to the various private methods.
+// Not sure how this might be done other than with conditional compile statements in
+// the source.
+// Ideally we want a way to test that doesn't always require starting the work loop
+// thread.
 
 #include <iostream>
 #include <curl/curl.h>
@@ -34,15 +44,19 @@ namespace {
 
     // Make a GET request to the configuration URL and convert the returned data
     // to a JSON object.
-    bool get_config(json &json_config)
+    bool get_config(const std::string &url, json &json_config)
     {
         bool ret = false;
         CURL *curl;
         CURLcode res;
 
+//        json_config = "{ \"applications\" : [\"bash\", \"firefox\", \"clangd\", \"evince\", \"nautilus\", \"chromium\"] }"_json;
+//        json_config = "{ \"applications\" : [\"bash\", \"firefox\"] }"_json;
+//        return true;
+
         curl = curl_easy_init();
         if (curl) {
-            curl_easy_setopt(curl, CURLOPT_URL, "http://my-json-server.typicode.com/greggmorris/epmon/db");
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
             curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
             curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 50L);
             curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
@@ -67,8 +81,8 @@ namespace {
 // The constructor doesn't really do any work, just sets local variables. I wanted
 // to minimize the places where locking would be required, so I don't do the first
 // GET until the thread is actually running.
-MonitorConfig::MonitorConfig(int interval, std::vector<std::string> *app_list, std::mutex &mut)
-    : read_interval(interval), apps(app_list), data_lock(mut)
+MonitorConfig::MonitorConfig(int interval, std::string url, std::vector<std::string> *app_list, std::mutex &mut)
+    : read_interval(interval), server_url(std::move(url)), apps(app_list), data_lock(mut)
 {
 }
 
@@ -78,7 +92,7 @@ void MonitorConfig::update_config()
 {
     json cfg;
 
-    if (get_config(cfg)) {
+    if (get_config(server_url, cfg)) {
         std::lock_guard<std::mutex> lck { data_lock };
         apps->clear();
         for (auto &element: cfg["applications"]) {

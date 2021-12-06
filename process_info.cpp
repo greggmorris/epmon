@@ -8,6 +8,10 @@
 // have to do for now. The thing that bothers me most is the need to do "before" and "after"
 // calls to get proc data to calculate the percent of CPU used by the process. There should be
 // a better way but I couldn't find it in a reasonable time frame.
+// Testing
+// This code is probably fairly easy to test. Since it's C code, we can create a test module
+// to call the various functions individually. It would also be nice to have fake versions
+// of some functions, to create fake process data and see how the rest of the code handles it.
 
 #include "process_info.h"
 #include <unistd.h>
