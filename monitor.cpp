@@ -10,7 +10,7 @@
 // Once we have an updated list of app names, we loop through it, getting the process
 // info for the app (if the app exists) and creating a JSON object with the results.
 // The results of each app are added to a local vector of JSON objects, then when we
-// have collected info on all the apps, the individual results are collected into a
+// have collected info on all the apps, the individual results are combined into a
 // single JSON object. That object is converted to a string and sent via a POST message
 // to the results server.
 // The only public method is the run() method, which starts a thread running the
@@ -19,9 +19,10 @@
 // What It Doesn't Do
 // There is no way to update the process info collection interval. The interval is
 // passed into the constructor, there is no mechanism to update it at runtime.
-// The results server URL is hard-coded. It should be configurable and updatable at
-// runtime, but as with the loop interval, there is no mechanism to do this.
-// I think error handling could be more robust, and that's something that would probably
+// Likewise the results server URL is passed into the constructor and there is no
+// mechanism to update it at runtime, either. Both of these should be configurable
+// and updatable at runtime.
+// I think error handling could be more robust, which is something that would probably
 // be made more obvious by more extensive testing.
 // Testing
 // There isn't any but there should be, obviously. I think it would be useful to be
@@ -33,7 +34,6 @@
 // Ideally we want a way to test that doesn't always require starting the work loop
 // thread.
 
-#include <iostream>
 #include <unistd.h>
 #include <curl/curl.h>
 #include "monitor.h"
@@ -113,7 +113,7 @@ namespace {
     }
 
     // Send a POST message containing the JSON app monitoring results to the results URL.
-    bool send_app_results(const std::string &url, json &json_results)
+    bool send_app_results(const std::string &url, json &json_results, const std::shared_ptr<spdlog::logger> &logger)
     {
         bool ret = false;
         char post_buf[4096];
@@ -134,10 +134,12 @@ namespace {
             // POST it!
             res = curl_easy_perform(curl);
             if (res != CURLE_OK)
-                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+                logger->error("Monitor send_app_results failed: {}", curl_easy_strerror(res));
             curl_easy_cleanup(curl);
-            ret = true;
+            ret = (res == CURLE_OK);
         }
+        else
+            logger->error("Monitor send_app_results curl_easy_init failed");
         return ret;
     }
 }
@@ -148,6 +150,8 @@ namespace {
 Monitor::Monitor(int interval, std::string url, std::vector<std::string> *app_list, std::mutex &mut)
     : monitor_interval(interval), results_url(std::move(url)), shared_app_list(app_list), data_lock(mut)
 {
+    // Get the shared logger pointer.
+    logger = spdlog::get("epmon");
 }
 
 // We don't really need to clear the local app list, so there's probably no reason
@@ -167,6 +171,7 @@ json Monitor::get_all_app_info()
     std::vector<json> results_vec;
 
     for (auto &app : local_app_list) {
+        logger->info("Monitor::get_all_app_info: getting info for {0}", app);
         get_proc_info(app, &pid, &pcpu, &mem);
         // Only add results if we actually got some.
         if (pid > 0) {
@@ -174,19 +179,21 @@ json Monitor::get_all_app_info()
             results_vec.push_back(jres);
         }
         else
-            std::cout << "Monitor::get_all_app_info: " << app << " returned pid=" << pid << std::endl;
+            logger->warn("Monitor::get_all_app_info: process {0} not found", app);
     }
-    // Combine the individual results into a single JSON object.
+    // Combine the individual results into a single JSON object. If there are no
+    // results to combine, jres will be empty.
     jres = combine_results(results_vec);
     return jres;
 }
 
 // Copy from the shared list of applications to monitor to a local list. I went round
 // and round on this, finally deciding that it would be better if I didn't have to lock
-// the shared list for any longer than absolutely necessary. One possible drawback to
-// this is that the list of applications to monitor could change while I'm still
-// processing the local list. On the other hand, not having to worry about the list
-// changing while I'm looping through it does simplify things a bit, I think.
+// the shared list for any longer than absolutely necessary. One drawback to
+// this is that if the list of applications to monitor changes while I'm still
+// processing the local list, I won't know about it until the next time through the
+// work loop. It's also a duplication of data, but I don't think it's likely to be
+// a huge amount of data.
 int Monitor::update_app_list()
 {
     local_app_list.clear();
@@ -206,30 +213,34 @@ void Monitor::work_loop()
 {
     json jres;
 
-    std::cout << "begin Monitor::work_loop\n";
+    logger->info("begin Monitor::work_loop");
     while(true) {
         // Copy the shared app list to a local list.
-        std::cout << "Monitor::work_loop: calling update_app_list" << std::endl;
+        logger->info("Monitor::work_loop: calling update_app_list");
         int num_apps = update_app_list();
         // It's possible there are no apps to monitor. This may happen if this thread
         // runs before the MonitorConfig thread can read the app list, or maybe
         // Something Bad happened reading from the configuration server. Whatever,
         // we'll just sleep and hope things are better next time around.
-        if (num_apps == 0)
-            std::cout << "Monitor::work_loop: No apps specified." << std::endl;
+        if (num_apps == 0) {
+            logger->warn("Monitor::work_loop: no apps specified");
+        }
         else {
             // Get the process info for the monitored apps in a single JSON object.
             jres = get_all_app_info();
             if (jres.empty()) {
-                std::cout << "Monitor::work_loop: no results to send." << std::endl;
+                logger->warn("Monitor::work_loop: no results to send");
             }
             else {
-                std::cout << "Monitor::work_loop: sending monitor results." << std::endl;
                 // Send the collected results to the results server.
-                send_app_results(results_url, jres);
+                bool ret = send_app_results(results_url, jres, logger);
+                if (ret)
+                    logger->info("Monitor::work_loop: successfully sent app monitor results");
+                else
+                    logger->warn("Monitor::work_loop: failed to send app monitor results");
             }
         }
-        std::cout << "Monitor::work_loop: sleeping for " << monitor_interval << " seconds" << std::endl;
+        logger->info("Monitor::work_loop: sleeping for {0} seconds", monitor_interval);
         // Sleep for the configured interval.
         sleep(monitor_interval);
     }

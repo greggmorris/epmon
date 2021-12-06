@@ -9,9 +9,13 @@
 // There are two data objects defined: a vector of strings to contain the names of applications
 // to monitor, and a mutex for data locking. See the class implementation files for more on the
 // use of this shared data.
+// The logging library provides its own support for retrieving a defined logging pointer. There is
+// a global pointer defined and initialized but it is not passed to the threads since they can
+// retrieve it themselves. Note that the logging behavior is to append to a log file, so multiple
+// runs of the program will accumulate in the log file.
 // We instantiate an object of each of the two classes, passing in the loop interval value, the
 // respective server URL, a pointer to the app name vector, and the mutex. Then it starts the
-// work loop in each class as a thread and just waits for the threads to finish. But there is
+// work loop in each class on its own thread and just waits for the threads to finish. But there is
 // no clever shutdown mechanism, so we catch Ctrl-C and terminate the program.
 // The configuration server URL and results server URL default to my testing URLs. You can
 // specify your own URLs on the command line when running the program.
@@ -29,9 +33,11 @@
 #include <climits>
 #include <mutex>
 #include <thread>
-#include "nlohmann_json/json.hpp"
 #include <curl/curl.h>
-//#include "process_info.h"
+#include "nlohmann_json/json.hpp"
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/async.h>
 #include "monitor_config.h"
 #include "monitor.h"
 
@@ -39,7 +45,7 @@ using json = nlohmann::json;
 
 // Define some reasonable min, max, and default values for loop intervals.
 #define CONFIG_UPDATE_INTERVAL_MIN      1
-#define CONFIG_UPDATE_INTERVAL_MAX      600
+#define CONFIG_UPDATE_INTERVAL_MAX      1800
 #define CONFIG_UPDATE_INTERVAL_DEFAULT  30
 #define MONITOR_UPDATE_INTERVAL_MIN     1
 #define MONITOR_UPDATE_INTERVAL_MAX     600
@@ -52,8 +58,11 @@ using json = nlohmann::json;
 std::vector<std::string> app_list;
 // This is the mutex shared by the MonitorConfig and Monitor classes.
 std::mutex data_lock;
+// The logger. The threads can retrieve this themselves by name.
+std::shared_ptr<spdlog::logger> logger;
 
-// This struct stores program configuration, values are collected from the command line.
+// This struct stores program configuration. There are defaults that can be overridden
+// by values collected from the command line.
 struct Ep_config
 {
     // Interval in seconds to read/update the monitor configuration.
@@ -76,10 +85,27 @@ struct Ep_config
 };
 
 namespace {
+    // Initialize the logger. We use a global variable to store the logger pointer;
+    // the threads will retrieve their own pointer to the same logger in their constructors.
+    bool init_logger()
+    {
+        bool ret = false;
+        try
+        {
+            logger = spdlog::basic_logger_mt<spdlog::async_factory>("epmon", "logs/epmon_log.txt");
+            ret = true;
+        }
+        catch (const spdlog::spdlog_ex &ex)
+        {
+            std::cout << "Log initialization failed: " << ex.what() << std::endl;
+        }
+        return ret;
+    }
+
     // Look for configuration parameters on the command line. The expected format is
     // epmon [config read interval] [monitor interval] [configuration server URL] [results server URL]
     // where the interval values are seconds such that:
-    //     1 <= [config read interval] <= 600
+    //     1 <= [config read interval] <= 1800
     //     1 <= [monitor interval] <= 600
     // You must pass all parameters.
     // If we fail to read values, use the default values defined above. This is not awesome
@@ -164,6 +190,7 @@ namespace {
     // Simple signal handler to attempt a vaguely graceful shutdown.
     void signalIntHandler(int signum)
     {
+        logger->info("Received termination signal, shutting down.");
         std::cout << "\nReceived termination signal, shutting down." << std::endl;
         curl_global_cleanup();
         exit(signum);
@@ -187,11 +214,11 @@ namespace {
 // The main function. I made the decision to always have valid configuration values
 // so the program won't quit immediately if you don't provide them or provide invalid
 // values. That said, there is no mechanism to change those values once the program
-// is running. There is also no clever shutdown mechanism, instead I just catch Ctrl-C
-// and terminate.
-// All that happens here is that we create and initialize the two classes, MonitorConfig to
-// read the apps to monitor; and Monitor to do the monitoring and sending of results, and start
-// their work loop threads.
+// is running. There is also no clever shutdown mechanism either, instead I just catch
+// Ctrl-C and terminate.
+// We do some global initialization, then create and initialize objects of the two
+// classes, MonitorConfig to read the apps to monitor; and Monitor to do the monitoring
+// and sending of results, and start their work loop threads.
 int main(int argc, char *argv[])
 {
     Ep_config prog_config;
@@ -203,6 +230,11 @@ int main(int argc, char *argv[])
     // guarantee which thread might get there first, we'll do it here.
     curl_global_init(CURL_GLOBAL_ALL);
 
+    // Initialize logging.
+    if (!init_logger()) {
+        std::cerr << "Logger unavailable, terminating." << std::endl;
+        exit(-1);
+    }
     // set program config options if provided
     read_program_config(argc, argv, prog_config);
     std::cout << "epmon\n"
@@ -210,17 +242,23 @@ int main(int argc, char *argv[])
               << "\n\tmonitor interval: " << prog_config.monitor_interval
               << "\n\tconfiguration server URL: " << prog_config.config_server_url
               << "\n\tresults server URL: " << prog_config.results_server_url
+              << "\nLog file is logs/epmon_log.txt"
               << "\nPress Ctrl-C to quit." << std::endl;
-
+    logger->info("Begin epmon with config interval {0}, monitor interval {1}, config server {2}, results server {3}",
+                 prog_config.config_update_interval, prog_config.monitor_interval,
+                 prog_config.config_server_url, prog_config.results_server_url);
     // start monitor configuration thread
+    logger->info("Starting MonitorConfig thread");
     MonitorConfig monitor_config(prog_config.config_update_interval, prog_config.config_server_url, &app_list, data_lock);
     std::thread monitor_config_thread = monitor_config.run();
 
     // start monitor thread
+    logger->info("Starting Monitor thread");
     Monitor monitor(prog_config.monitor_interval, prog_config.results_server_url, &app_list, data_lock);
     std::thread monitor_thread = monitor.run();
 
     monitor_config_thread.join();
     monitor_thread.join();
+
     return 0;
 }

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <thread>
 #include "nlohmann_json/json.hpp"
+#include <spdlog/spdlog.h>
 
 using json = nlohmann::json;
 
@@ -18,10 +19,17 @@ public:
     std::thread run() { return std::thread([this] { this->config_loop(); }); }
 
 private:
-    int read_interval;  // number of seconds between calls to read configuration
-    std::string server_url; // URL of configuration server
+    // Number of seconds between calls to read configuration.
+    int read_interval;
+    // URL of configuration server.
+    std::string server_url;
+    // The shared list of apps to monitor.
     std::vector<std::string> *apps;
+    // The shared mutex.
     std::mutex &data_lock;
+    // The logger.
+    std::shared_ptr<spdlog::logger> logger;
+
     void update_config();
     void config_loop();
 };

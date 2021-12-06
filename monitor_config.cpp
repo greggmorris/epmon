@@ -1,10 +1,10 @@
 // monitor_config.cpp
 // This file implements the MonitorConfig class methods and associated support functions.
-// This class is responsible for periodically getting configuration information which
+// This class is responsible for periodically getting configuration information that
 // consists of a list of process names to monitor. The process names are stored in a shared
 // vector of strings. This vector is also used by the Monitor class to know which processes
 // to monitor. When it's time to read from the configuration server, we do the GET operation,
-// and if that succeeds, we lock the shared vector of app names and update it. We do as
+// and if that succeeds, lock the shared vector of app names and update it. We do as
 // little as possible while the data is locked; no external functions or methods are called
 // while we're locked.
 // The only public method is the run() method, which starts a thread running the private
@@ -13,9 +13,10 @@
 // What It Doesn't Do
 // There is no way to update the config info collection interval. The interval is
 // passed into the constructor, there is no mechanism to update it at runtime.
-// The configuration server URL is hard-coded. It should be configurable and updatable at
-// runtime, but as with the loop interval, there is no mechanism to do this.
-// I think error handling could be more robust, and that's something that would probably
+// The configuration server URL is also passed into the constructor, and like the
+// interval there is no way to update it at runtime. Both of these should be
+// configurable and updatable at runtime.
+// I think error handling could be more robust, which is something that would probably
 // be made more obvious by more extensive testing.
 // Testing
 // There isn't any but there should be, obviously. I would like to be able to create
@@ -46,35 +47,36 @@ namespace {
 
     // Make a GET request to the configuration URL and convert the returned data
     // to a JSON object.
-    bool get_config(const std::string &url, json &json_config)
+    bool get_config(const std::string &url, json &json_config, const std::shared_ptr<spdlog::logger> &logger)
     {
         bool ret = false;
         CURL *curl;
         CURLcode res;
 
-//        json_config = "{ \"applications\" : [\"bash\", \"firefox\", \"clangd\", \"evince\", \"nautilus\", \"chromium\"] }"_json;
-//        json_config = "{ \"applications\" : [\"bash\", \"firefox\"] }"_json;
-//        return true;
-
         curl = curl_easy_init();
         if (curl) {
             curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
             curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-//            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
 
             std::string response_string;
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
             curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_string);
 
-            curl_easy_perform(curl);
-            // Convert the GET results into a JSON object.
-            if (!response_string.empty())
-                json_config = json::parse(response_string);
-            else
-                std::cout << "get_config: response_string is empty\n";
+            res = curl_easy_perform(curl);
+            if (res != CURLE_OK)
+                logger->error("MonitorConfig get_config failed: {}", curl_easy_strerror(res));
+            else {
+                // Convert the GET results into a JSON object.
+                if (!response_string.empty())
+                    json_config = json::parse(response_string);
+                else
+                    logger->warn("MonitorConfig get_config: response_string is empty");
+            }
             curl_easy_cleanup(curl);
-            ret = true;
+            ret = (res == CURLE_OK);
         }
+        else
+            logger->error("MonitorConfig get_config curl_easy_init failed");
         return ret;
     }
 }
@@ -85,6 +87,8 @@ namespace {
 MonitorConfig::MonitorConfig(int interval, std::string url, std::vector<std::string> *app_list, std::mutex &mut)
     : read_interval(interval), server_url(std::move(url)), apps(app_list), data_lock(mut)
 {
+    // Get the shared logger pointer.
+    logger = spdlog::get("epmon");
 }
 
 // This method updates the shared list of application names to monitor. Note that it
@@ -92,8 +96,10 @@ MonitorConfig::MonitorConfig(int interval, std::string url, std::vector<std::str
 void MonitorConfig::update_config()
 {
     json cfg;
+    bool ret = false;
 
-    if (get_config(server_url, cfg)) {
+    ret = get_config(server_url, cfg, logger);
+    if (ret) {
         std::lock_guard<std::mutex> lck { data_lock };
         apps->clear();
         for (auto &element: cfg["applications"]) {
@@ -101,7 +107,7 @@ void MonitorConfig::update_config()
         }
     }
     else
-        std::cout << "MonitorConfig::update_config: get_config failed\n";
+        logger->warn("MonitorConfig::update_config: get_config failed");
 }
 
 // This is the thread function. It runs forever because I didn't want to spend the time
@@ -110,14 +116,12 @@ void MonitorConfig::update_config()
 // stored in a shared vector of strings.
 void MonitorConfig::config_loop()
 {
-    std::cout << "begin MonitorConfig::config_loop\n";
+    logger->info("begin MonitorConfig::config_loop");
     while(true) {
-        std::cout << "MonitorConfig::config_loop: getting config\n";
+        logger->info("MonitorConfig::config_loop: getting config");
         update_config();
-        std::cout << "MonitorConfig::config_loop: apps to monitor: " << std::endl;
-        for (auto &app : *apps)
-            std::cout << "  " << app << std::endl;
-        std::cout << "MonitorConfig::config_loop: sleeping for " << read_interval << " seconds"<< std::endl;
+        logger->info("MonitorConfig::config_loop: received {0} apps to monitor", apps->size());
+        logger->info("MonitorConfig::config_loop: sleeping for {0} seconds", read_interval);
         sleep(read_interval);
     }
 }
