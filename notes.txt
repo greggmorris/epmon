@@ -1,0 +1,39 @@
+Project github repo: https://github.com/greggmorris/epmon
+
+How to get memory usage at runtime using C++?
+https://stackoverflow.com/questions/669438/how-to-get-memory-usage-at-runtime-using-c
+
+How to calculate the CPU usage of a process by PID in Linux from C?
+https://stackoverflow.com/questions/1420426/how-to-calculate-the-cpu-usage-of-a-process-by-pid-in-linux-from-c/1424556#1424556
+
+How do I get the total CPU usage of an application from /proc/pid/stat?
+https://stackoverflow.com/questions/16726779/how-do-i-get-the-total-cpu-usage-of-an-application-from-proc-pid-stat
+
+Listing Processes with libproc
+https://codingrelic.geekhold.com/2011/02/listing-processes-with-libproc.html
+
+manpage proc - process information pseudo-filesystem
+https://manpages.ubuntu.com/manpages/xenial/man5/proc.5.html
+
+Linux API to list running processes?
+https://stackoverflow.com/questions/939778/linux-api-to-list-running-processes
+
+Procps source
+https://gitlab.com/procps-ng/procps
+
+libcurl
+https://curl.se/libcurl/c/example.html
+https://curl.se/libcurl/c/simple.html
+
+Command line for testing:
+10 5 http://my-json-server.typicode.com/greggmorris/epmon/db https://enbtrmfkj3vp.x.pipedream.net
+
+spdlog: https://github.com/gabime/spdlog
+
+Server with my config stuff:
+https://my-json-server.typicode.com/greggmorris/epmon
+It uses "db.json" in my github repo.
+
+Server that catches POST events for results:
+https://requestbin.com/r/enbtrmfkj3vp/21vNDxaSCD53dOaKWjKXObyl2HH
+Not sure how long it'll live but it appears simple enough to create another one.
